@@ -8,8 +8,8 @@ rules:
   severity: WARNING
   metadata:
     likelihood: HIGH
-    impact: HIGH
-    confidence: MEDIUM
+    impact: MEDIUM
+    confidence: HIGH
     category: security
     cwe:
     - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
@@ -30,6 +30,9 @@ rules:
     - spring
   languages: [java]
   mode: taint
+  options:
+    taint_assume_safe_numbers: true
+    taint_assume_safe_booleans: true
   pattern-sources:
   - patterns:
     - pattern-either:
@@ -70,6 +73,3 @@ rules:
         - metavariable-regex:
             metavariable: $SQLCMD
             regex: (execute|query|executeUpdate)
-  pattern-sanitizers:
-  - pattern: (int $X)
-  - pattern: (boolean $X)
