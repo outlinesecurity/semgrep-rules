@@ -119,15 +119,25 @@ def is_taint(rule: Dict[str, Any]) -> bool:
             return True
     return False
 
-def is_high_confidence(rule: Dict[str, Any]) -> bool:
+def is_confidence(rule: Dict[str, Any],arg_confidence) -> bool:
     if 'metadata' in rule:
         metadata = rule['metadata']
         if 'confidence' in metadata:
             confidence = metadata['confidence']
 
-            if confidence.lower().strip() == 'high':
+            if confidence.lower().strip() == arg_confidence:
                 return True
     return False
+def is_impact(rule:Dict[str,Any],arg_impact:str) -> bool:
+    if 'metadata' in rule:
+        metadata = rule['metadata']
+        if 'impact' in metadata:
+            impact = metadata['impact']
+            if impact.lower().strip() == arg_impact:
+                return True
+    return False
+
+
 
 # Fixes rules that have wacky owasp tags, like not having both the name and number, having misspellings, being mislabelled, etc
 def normalize_owasp(owasp: str) -> str:
@@ -156,7 +166,8 @@ if __name__ == "__main__":
     # Add arguments here
     parser.add_argument("--skip-audit", "-s", help="skip audit rules", action='store_true')
     parser.add_argument("--taint-only", "-t", help="only process taint mode rules. does not exclude audit rules using taint mode. use in combination with `--taint-only` to do so.", action='store_true')
-    parser.add_argument("--high-signal", "-hs", help="process all taint mode rules in addition to ones with `confidence: HIGH`, even if they don't use taint. excludes all audit rules. NOTE: do NOT mix with `--skip-audit` or `--taint-only`", action='store_true')
+    parser.add_argument("--signal-fidelity", "-sf", help="process all taint mode rules in addition to ones with `confidence:[YOUR_VAL]`, even if they don't use taint. excludes all audit rules. NOTE: do NOT mix with `--skip-audit` or `--taint-only`",choices=["high","medium","low"])
+    parser.add_argument("--impact-severity","-is",help="Filter for rules with certain threshold of impact",choices=["high","medium","low"])
     parser.add_argument("--output-file", "-o", help="file to output json to")
     parser.add_argument("directory", help="directory to scan")
 
@@ -182,19 +193,26 @@ if __name__ == "__main__":
             if not is_rule(path) or not is_security(path):
                 continue
             with open(path, "r") as fin:
-                rules = yaml.safe_load(fin)
+                try:
+                    rules = yaml.safe_load(fin)
+                except Exception as e:
+                    print(f"Ignoring {path}")
                 for rule in rules.get("rules", []):
                     if args.taint_only:
                         if not is_taint(rule):
                             continue
 
                     # Include rules in high signal scanning if a rule has `confidence: HIGH` OR (is a taint mode rule AND not an audit rule)
-                    if args.high_signal:
-                        if is_high_confidence(rule) or (is_taint(rule) and not is_audit(path)):
+                    if args.signal_fidelity:
+                        if is_confidence(rule,args.signal_fidelity) or (is_taint(rule) and not is_audit(path)):
                             pass # go on to process the rule
                         else:
                             continue # skip to the next rule
-
+                    if args.impact_severity:
+                        if is_impact(rule,args.impact_severity):
+                            pass # go on to process the rule
+                        else:
+                            continue # skip to the next rule
                     cwe = get_cwe(rule)
                     lang = get_lang(path)
                     owasp = get_owasp(rule)
@@ -219,33 +237,15 @@ if __name__ == "__main__":
                         owasp_by_framework_matrix[owasp_standard][lang][framework].append((path, rule))
                         for tech in technology: # Some rules have multiple technology tags
                             owasp_by_technology_matrix[owasp_standard][lang][tech].append((path, rule))
+    owasp_by_lang_rules = {}
+    for owasp, owasp_dict in owasp_by_lang_matrix.items():
+        owasp_by_lang_rules[owasp] = {}
+        for lang, lang_array in owasp_dict.items():
+            print(f"How many for {lang} - {len(lang_array)}")
+            owasp_by_lang_rules[owasp][lang] = []
+            for item in lang_array:
+                owasp_by_lang_rules[owasp][lang].append(item[0])
 
     out_file_name = args.output_file if args.output_file else 'json_output.json'
     of = open(out_file_name, "w")
-    of.write(json.dumps({
-        "owasp": {
-            "totals": {owasp: len(v) for owasp, v in sorted(owasp_matrix.items())},
-            "per_framework": {owasp: {lang: {frm: len(v) for frm, v in owasp_by_framework_matrix[owasp][lang].items()} for lang in sorted(owasp_by_framework_matrix[owasp])} for owasp in sorted(owasp_by_framework_matrix)},
-            "per_technology": {owasp: {lang: {frm: len(v) for frm, v in owasp_by_technology_matrix[owasp][lang].items()} for lang in sorted(owasp_by_technology_matrix[owasp])} for owasp in sorted(owasp_by_technology_matrix)},
-            "rules_with_no_owasp": [t[0] for t in owasp_matrix[""]],
-        },
-        "cwe": {
-            "totals": {cwe: len(v) for cwe, v in sorted(cwe_matrix.items())},
-            "per_framework": {cwe: {lang: {frm: len(v) for frm, v in cwe_by_framework_matrix[cwe][lang].items()} for lang in sorted(cwe_by_framework_matrix[cwe])} for cwe in sorted(cwe_by_framework_matrix)},
-            "per_technology": {cwe: {lang: {frm: len(v) for frm, v in cwe_by_technology_matrix[cwe][lang].items()} for lang in sorted(cwe_by_technology_matrix[cwe])} for cwe in sorted(cwe_by_technology_matrix)},
-            "per_metacategory": { # formatting this one specifically because it's especially awful to read as a one-liner
-                lang: {
-                    frm: {
-                        mc: {
-                            c: (
-                                {"count": len(cwe_metacategory_matrix[lang][frm][mc])},
-                                {"cwes": [cwe for cwe in cwe_metacategory_matrix[lang][frm][mc]]},
-                            )
-                        } for mc in cwe_metacategory_matrix[lang][frm]
-                    } for frm in sorted(cwe_metacategory_matrix[lang])
-                } for lang in sorted(cwe_metacategory_matrix)
-            },
-            "rules_with_no_cwe": [t[0] for t in cwe_matrix[""]],
-        }
-    }))
-
+    of.write(json.dumps(owasp_by_lang_rules))
