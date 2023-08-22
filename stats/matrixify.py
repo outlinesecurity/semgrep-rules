@@ -238,14 +238,18 @@ if __name__ == "__main__":
                         for tech in technology: # Some rules have multiple technology tags
                             owasp_by_technology_matrix[owasp_standard][lang][tech].append((path, rule))
     owasp_by_lang_rules = {}
+    # with open("owasp_by_lang.json","w") as f:
+    #     f.write(json.dumps(owasp_by_lang_matrix))
     for owasp, owasp_dict in owasp_by_lang_matrix.items():
         owasp_by_lang_rules[owasp] = {}
         for lang, lang_array in owasp_dict.items():
-            print(f"How many for {lang} - {len(lang_array)}")
             owasp_by_lang_rules[owasp][lang] = []
             for item in lang_array:
-                owasp_by_lang_rules[owasp][lang].append(item[0])
-
+                rule_object = {}
+                file_path = item[0]
+                raw_github_path = file_path.replace("..","https://raw.githubusercontent.com/returntocorp/semgrep-rules/develop")
+                rule_object["file_path"],rule_object["description"],rule_object["raw_github_file"],rule_object["metadata"] = file_path,item[1].get("message"),raw_github_path,item[1].get("metadata")
+                owasp_by_lang_rules[owasp][lang].append(rule_object)
     out_file_name = args.output_file if args.output_file else 'json_output.json'
     of = open(out_file_name, "w")
     of.write(json.dumps(owasp_by_lang_rules))
